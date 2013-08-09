@@ -573,6 +573,61 @@ static NSString *RKMIMETypeFromAFHTTPClientParameterEncoding(AFHTTPClientParamet
     return operation;
 }
 
+- (id)appropriateObjectRequestOperation2WithObject:(id)object
+                                           method:(RKRequestMethod)method
+                                             path:(NSString *)path
+                                       parameters:(NSDictionary *)parameters
+{
+    RKObjectRequestOperation *operation = nil;
+    NSURLRequest *request = [self requestWithObject:object method:method path:path parameters:parameters];
+    NSDictionary *routingMetadata = nil;
+    if (! path) {
+        RKRoute *route = [self.router.routeSet routeForObject:object method:method];
+        NSDictionary *interpolatedParameters = nil;
+        NSURL *URL = [self URLWithRoute:route object:object interpolatedParameters:&interpolatedParameters];
+        if (! URL) {
+            RKLogError(@"Failed to construct a URL from the provided object. Returning nil.");
+            return operation;
+        }
+        path = [URL relativeString];
+        routingMetadata = @{ @"routing": @{ @"parameters": interpolatedParameters, @"route": route } };
+    }
+    
+    NSArray *matchingDescriptors = RKFilteredArrayOfResponseDescriptorsMatchingPathAndMethod(self.responseDescriptors, path, method);
+    BOOL containsEntityMapping = RKDoesArrayOfResponseDescriptorsContainEntityMapping(matchingDescriptors);
+    BOOL isManagedObjectRequestOperation = (containsEntityMapping || [object isKindOfClass:[NSManagedObject class]]);
+    
+    if (isManagedObjectRequestOperation && !self.managedObjectStore) RKLogWarning(@"Asked to create an `RKManagedObjectRequestOperation` object, but managedObjectStore is nil.");
+    if (isManagedObjectRequestOperation && self.managedObjectStore) {
+        // Construct a Core Data operation
+        NSManagedObjectContext *managedObjectContext = [object respondsToSelector:@selector(managedObjectContext)] ? [object managedObjectContext] : self.managedObjectStore.mainQueueManagedObjectContext;
+        operation = [self managedObjectRequestOperationWithRequest:request managedObjectContext:managedObjectContext success:nil failure:nil];
+        
+        if ([object isKindOfClass:[NSManagedObject class]]) {
+            static NSPredicate *temporaryObjectsPredicate = nil;
+            if (! temporaryObjectsPredicate) temporaryObjectsPredicate = [NSPredicate predicateWithFormat:@"objectID.isTemporaryID == YES"];
+            NSSet *temporaryObjects = [[managedObjectContext insertedObjects] filteredSetUsingPredicate:temporaryObjectsPredicate];
+            if ([temporaryObjects count]) {
+                RKLogInfo(@"Asked to perform object request for NSManagedObject with temporary object IDs: Obtaining permanent ID before proceeding.");
+                __block BOOL _blockSuccess;
+                __block NSError *_blockError;
+                
+                [[object managedObjectContext] performBlockAndWait:^{
+                    _blockSuccess = [[object managedObjectContext] obtainPermanentIDsForObjects:[temporaryObjects allObjects] error:&_blockError];
+                }];
+                if (! _blockSuccess) RKLogWarning(@"Failed to obtain permanent ID for object %@: %@", object, _blockError);
+            }
+        }
+    } else {
+        // Non-Core Data operation
+        operation = [self objectRequestOperationWithRequest:request success:nil failure:nil];
+    }
+    
+    if (RKDoesArrayOfResponseDescriptorsContainMappingForClass(self.responseDescriptors, [object class])) operation.targetObject = object;
+    operation.mappingMetadata = routingMetadata;
+    return operation;
+}
+
 - (id)appropriateObjectRequestOperationWithObject:(id)object
                                            method:(RKRequestMethod)method
                                              path:(NSString *)path
@@ -697,6 +752,18 @@ static NSString *RKMIMETypeFromAFHTTPClientParameterEncoding(AFHTTPClientParamet
 {
     NSAssert(object || path, @"Cannot make a request without an object or a path.");
     RKObjectRequestOperation *operation = [self appropriateObjectRequestOperationWithObject:object method:RKRequestMethodGET path:path parameters:parameters];
+    [operation setCompletionBlockWithSuccess:success failure:failure];
+    [self enqueueObjectRequestOperation:operation];
+}
+
+- (void)postObject2:(id)object
+              path:(NSString *)path
+        parameters:(NSDictionary *)parameters
+           success:(void (^)(RKObjectRequestOperation *operation, RKMappingResult *mappingResult))success
+           failure:(void (^)(RKObjectRequestOperation *operation, NSError *error))failure
+{
+    NSAssert(object || path, @"Cannot make a request without an object or a path.");
+    RKObjectRequestOperation *operation = [self appropriateObjectRequestOperation2WithObject:object method:RKRequestMethodPOST path:path parameters:parameters];
     [operation setCompletionBlockWithSuccess:success failure:failure];
     [self enqueueObjectRequestOperation:operation];
 }

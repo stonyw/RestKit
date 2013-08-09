@@ -510,6 +510,10 @@ RKMappingResult, RKRequestDescriptor, RKResponseDescriptor;
                                            method:(RKRequestMethod)method
                                              path:(NSString *)path
                                        parameters:(NSDictionary *)parameters;
+- (id)appropriateObjectRequestOperation2WithObject:(id)object
+                                           method:(RKRequestMethod)method
+                                             path:(NSString *)path
+                                       parameters:(NSDictionary *)parameters;
 
 ///--------------------------------------------------
 /// @name Managing Enqueued Object Request Operations
@@ -682,6 +686,11 @@ RKMappingResult, RKRequestDescriptor, RKResponseDescriptor;
  @see [RKObjectManager appropriateObjectRequestOperationWithObject:method:path:parameters:]
  */
 - (void)postObject:(id)object
+              path:(NSString *)path
+        parameters:(NSDictionary *)parameters
+           success:(void (^)(RKObjectRequestOperation *operation, RKMappingResult *mappingResult))success
+           failure:(void (^)(RKObjectRequestOperation *operation, NSError *error))failure;
+- (void)postObject2:(id)object
               path:(NSString *)path
         parameters:(NSDictionary *)parameters
            success:(void (^)(RKObjectRequestOperation *operation, RKMappingResult *mappingResult))success
